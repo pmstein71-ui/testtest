@@ -16,14 +16,6 @@ jobs:
           cache: false
       - run: go mod tidy
       - run: gofmt -w cmd internal
-      - uses: actions/upload-artifact@v4
-        with:
-          name: formatted-source
-          path: |
-            go.mod
-            go.sum
-            cmd/
-            internal/
       - run: go vet ./...
       - run: go test -race ./...
   windows:
@@ -42,7 +34,7 @@ jobs:
         run: |
           go mod tidy
           New-Item -ItemType Directory -Force dist
-          $version = 'dev'
+          $version = 'v0.0.0-preview'
           if ($env:GITHUB_REF -like 'refs/tags/v*') { $version = $env:GITHUB_REF_NAME }
           go build -trimpath -ldflags "-s -w -X github.com/pmstein71-ui/testtest/internal/release.Version=$version" -o dist/pulse-client.exe ./cmd/client
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
