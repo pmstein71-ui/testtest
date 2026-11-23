@@ -42,6 +42,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go build -trimpath -ldflags '-s -w' -o dist/pulse-server.exe ./cmd/server
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test Windows-specific password dialog code
+        run: go test ./...
       - name: Smoke test Windows executables
         run: python scripts/smoke.py
       - name: Build setup.exe

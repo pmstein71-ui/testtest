@@ -19,7 +19,7 @@ import (
  "time"
 
  "golang.org/x/crypto/bcrypt"
- "golang.org/x/term"
+ "github.com/pmstein71-ui/testtest/internal/password"
  "github.com/pmstein71-ui/testtest/internal/startup"
  _ "modernc.org/sqlite"
 )
@@ -32,12 +32,8 @@ func run() error {
  db,err:=sql.Open("sqlite",filepath.Join(dir,"app.db"));if err!=nil{return err};defer db.Close();db.SetMaxOpenConns(1)
  for _,q:=range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`, `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, login TEXT UNIQUE NOT NULL, password BLOB NOT NULL)`, `CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires INTEGER NOT NULL)`}{if _,err=db.Exec(q);err!=nil{return err}}
  var count int;if err=db.QueryRow(`SELECT count(*) FROM users`).Scan(&count);err!=nil{return err}
- if count==0 {p:=os.Getenv("ADMIN_PASSWORD");if p==""&&term.IsTerminal(int(os.Stdin.Fd())) {
- fmt.Println("First start: create password for",env("ADMIN_LOGIN","admin"))
- fmt.Print("Password (12-72 bytes, hidden): ");b,e:=term.ReadPassword(int(os.Stdin.Fd()));fmt.Println();if e!=nil{return e}
- fmt.Print("Confirm password: ");confirm,e:=term.ReadPassword(int(os.Stdin.Fd()));fmt.Println();if e!=nil{return e};if string(b)!=string(confirm){return fmt.Errorf("passwords do not match")};p=string(b)
- }
- if len(p)<12||len(p)>72{return fmt.Errorf("first start requires a password of 12-72 bytes: run server in a terminal or set ADMIN_PASSWORD; see README.md")};hash,e:=bcrypt.GenerateFromPassword([]byte(p),bcrypt.DefaultCost);if e!=nil{return e};if _,err=db.Exec(`INSERT INTO users(login,password) VALUES(?,?)`,env("ADMIN_LOGIN","admin"),hash);err!=nil{return err}}
+ if count==0 {log.Println("First start: create administrator password in the setup window (Windows), or set ADMIN_PASSWORD")
+ p,e:=password.Read();if e!=nil{return e};hash,e:=bcrypt.GenerateFromPassword([]byte(p),bcrypt.DefaultCost);if e!=nil{return e};if _,err=db.Exec(`INSERT INTO users(login,password) VALUES(?,?)`,env("ADMIN_LOGIN","admin"),hash);err!=nil{return err}}
  interval,err:=time.ParseDuration(env("BACKUP_INTERVAL","24h"));if err!=nil||interval<time.Minute{return fmt.Errorf("BACKUP_INTERVAL must be a duration >= 1m")}
  backupDir:=env("BACKUP_DIR",filepath.Join(dir,"backups"));if err=os.MkdirAll(backupDir,0700);err!=nil{return err}
  backup:=func(){name:=filepath.Join(backupDir,"backup-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".db");_,e:=db.Exec(`VACUUM INTO '`+strings.ReplaceAll(name,"'","''")+`'`);if e!=nil{log.Printf("Backup failed: %v",e)}else{log.Printf("Backup saved: %s",name)}}
