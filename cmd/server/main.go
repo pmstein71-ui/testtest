@@ -32,7 +32,7 @@ func run() error {
  db,err:=sql.Open("sqlite",filepath.Join(dir,"app.db"));if err!=nil{return err};defer db.Close();db.SetMaxOpenConns(1)
  for _,q:=range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`, `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, login TEXT UNIQUE NOT NULL, password BLOB NOT NULL)`, `CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires INTEGER NOT NULL)`}{if _,err=db.Exec(q);err!=nil{return err}}
  var count int;if err=db.QueryRow(`SELECT count(*) FROM users`).Scan(&count);err!=nil{return err}
- if count==0 {log.Println("First start: create administrator password in the setup window (Windows), or set ADMIN_PASSWORD")
+ if count==0 {log.Println("First start: create administrator password on the local SETUP page, or set ADMIN_PASSWORD")
  p,e:=password.Read();if e!=nil{return e};hash,e:=bcrypt.GenerateFromPassword([]byte(p),bcrypt.DefaultCost);if e!=nil{return e};if _,err=db.Exec(`INSERT INTO users(login,password) VALUES(?,?)`,env("ADMIN_LOGIN","admin"),hash);err!=nil{return err}}
  interval,err:=time.ParseDuration(env("BACKUP_INTERVAL","24h"));if err!=nil||interval<time.Minute{return fmt.Errorf("BACKUP_INTERVAL must be a duration >= 1m")}
  backupDir:=env("BACKUP_DIR",filepath.Join(dir,"backups"));if err=os.MkdirAll(backupDir,0700);err!=nil{return err}

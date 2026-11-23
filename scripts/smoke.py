@@ -65,7 +65,20 @@ def main():
                                         ('client', {'SERVER_URL': 'http://remote.invalid:8080'})]:
                     p = launch(name, overrides)
                     assert p.wait(timeout=20) != 0, f'{name}: invalid config accepted'
-                server = launch('server'); processes.append(server)
+                # Exercise the real first-run browser setup, not only env bootstrap.
+                server = launch('server', {'ADMIN_PASSWORD': '', 'PULSE_NO_DIALOG': '0'}); processes.append(server)
+                def setup_url():
+                    text = (work / 'process.log').read_text(encoding='utf-8', errors='replace')
+                    matches = re.findall(r'SETUP: (http://127\.0\.0\.1:\d+)', text)
+                    return matches[-1] if matches else None
+                setup = wait_for(setup_url, processes)
+                code, html = request(setup, '/')
+                assert code == 200
+                nonce = re.search(r'name="pulse-setup" content="([a-f0-9]+)"', html.decode()).group(1)
+                body = {'password': env['ADMIN_PASSWORD'], 'confirm': env['ADMIN_PASSWORD']}
+                assert request(setup, '/setup', body, headers={'Origin': 'https://evil.invalid', 'X-Pulse-Setup': nonce})[0] == 403
+                assert request(setup, '/setup', {'password': 'admin', 'confirm': 'admin'}, headers={'Origin': setup, 'X-Pulse-Setup': nonce})[0] == 400
+                assert request(setup, '/setup', body, headers={'Origin': setup, 'X-Pulse-Setup': nonce})[0] == 200
                 wait_for(lambda: request(base, '/api/me')[0] == 401, processes)
                 snapshots = wait_for(lambda: list((work / 'data' / 'backups').glob('*.db')), processes)
                 with closing(sqlite3.connect(snapshots[0])) as db:
@@ -95,7 +108,7 @@ def main():
                 assert request(local, '/api/login', {'login': 'admin', 'password': 'wrong'})[0] == 401
                 time.sleep(1.1)
                 assert request(local, '/api/login', {'login': 'admin', 'password': env['ADMIN_PASSWORD']})[0] == 200
-                print('PASS: startup errors, DB restart, snapshot integrity, client/proxy, login/me/logout, server offline')
+                print('PASS: browser bootstrap, startup errors, DB restart, snapshot integrity, client/proxy, login/me/logout, server offline')
             except BaseException:
                 report = (work / 'process.log').read_text(encoding='utf-8', errors='replace') + '\n' + traceback.format_exc()
                 print(report)
