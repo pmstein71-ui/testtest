@@ -22,6 +22,7 @@ Source: "..\README.md"; DestDir: "{app}"
 [Icons]
 Name: "{group}\Pulse"; Filename: "{app}\pulse-client.exe"
 Name: "{autodesktop}\Pulse"; Filename: "{app}\pulse-client.exe"; Tasks: desktopicon
+Name: "{group}\Pulse Server"; Filename: "{app}\pulse-server.exe"
 [Tasks]
 Name: desktopicon; Description: "Create desktop shortcut"
 [Run]

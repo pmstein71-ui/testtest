@@ -19,18 +19,27 @@ import (
  "time"
 
  "golang.org/x/crypto/bcrypt"
+ "golang.org/x/term"
+ "github.com/pmstein71-ui/testtest/internal/startup"
  _ "modernc.org/sqlite"
 )
 
 func env(k,d string) string { if v:=os.Getenv(k);v!="" {return v};return d }
-func main(){
- dir:=env("DATA_DIR","data"); if err:=os.MkdirAll(dir,0700);err!=nil{log.Fatal(err)}
- db,err:=sql.Open("sqlite",filepath.Join(dir,"app.db"));if err!=nil{log.Fatal(err)};defer db.Close();db.SetMaxOpenConns(1)
- for _,q:=range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`, `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, login TEXT UNIQUE NOT NULL, password BLOB NOT NULL)`, `CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires INTEGER NOT NULL)`}{if _,err=db.Exec(q);err!=nil{log.Fatal(err)}}
- var count int;if err=db.QueryRow(`SELECT count(*) FROM users`).Scan(&count);err!=nil{log.Fatal(err)}
- if count==0 {p:=os.Getenv("ADMIN_PASSWORD");if len(p)<12{log.Fatal("Set ADMIN_PASSWORD to at least 12 bytes for first start")};hash,e:=bcrypt.GenerateFromPassword([]byte(p),bcrypt.DefaultCost);if e!=nil{log.Fatal(e)};if _,err=db.Exec(`INSERT INTO users(login,password) VALUES(?,?)`,env("ADMIN_LOGIN","admin"),hash);err!=nil{log.Fatal(err)}}
- interval,err:=time.ParseDuration(env("BACKUP_INTERVAL","24h"));if err!=nil||interval<time.Minute{log.Fatal("BACKUP_INTERVAL must be a duration >= 1m")}
- backupDir:=env("BACKUP_DIR",filepath.Join(dir,"backups"));if err=os.MkdirAll(backupDir,0700);err!=nil{log.Fatal(err)}
+func main(){startup.Run("server",run)}
+func run() error {
+ cert,key:=os.Getenv("TLS_CERT"),os.Getenv("TLS_KEY");if (cert=="")!=(key==""){return fmt.Errorf("TLS_CERT and TLS_KEY must be set together")}
+ dir,err:=startup.DataDir();if err!=nil{return err};log.Printf("Database directory: %s",dir); if err:=os.MkdirAll(dir,0700);err!=nil{return err}
+ db,err:=sql.Open("sqlite",filepath.Join(dir,"app.db"));if err!=nil{return err};defer db.Close();db.SetMaxOpenConns(1)
+ for _,q:=range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`, `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, login TEXT UNIQUE NOT NULL, password BLOB NOT NULL)`, `CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires INTEGER NOT NULL)`}{if _,err=db.Exec(q);err!=nil{return err}}
+ var count int;if err=db.QueryRow(`SELECT count(*) FROM users`).Scan(&count);err!=nil{return err}
+ if count==0 {p:=os.Getenv("ADMIN_PASSWORD");if p==""&&term.IsTerminal(int(os.Stdin.Fd())) {
+ fmt.Println("First start: create password for",env("ADMIN_LOGIN","admin"))
+ fmt.Print("Password (12-72 bytes, hidden): ");b,e:=term.ReadPassword(int(os.Stdin.Fd()));fmt.Println();if e!=nil{return e}
+ fmt.Print("Confirm password: ");confirm,e:=term.ReadPassword(int(os.Stdin.Fd()));fmt.Println();if e!=nil{return e};if string(b)!=string(confirm){return fmt.Errorf("passwords do not match")};p=string(b)
+ }
+ if len(p)<12||len(p)>72{return fmt.Errorf("first start requires a password of 12-72 bytes: run server in a terminal or set ADMIN_PASSWORD; see README.md")};hash,e:=bcrypt.GenerateFromPassword([]byte(p),bcrypt.DefaultCost);if e!=nil{return e};if _,err=db.Exec(`INSERT INTO users(login,password) VALUES(?,?)`,env("ADMIN_LOGIN","admin"),hash);err!=nil{return err}}
+ interval,err:=time.ParseDuration(env("BACKUP_INTERVAL","24h"));if err!=nil||interval<time.Minute{return fmt.Errorf("BACKUP_INTERVAL must be a duration >= 1m")}
+ backupDir:=env("BACKUP_DIR",filepath.Join(dir,"backups"));if err=os.MkdirAll(backupDir,0700);err!=nil{return err}
  backup:=func(){name:=filepath.Join(backupDir,"backup-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".db");_,e:=db.Exec(`VACUUM INTO '`+strings.ReplaceAll(name,"'","''")+`'`);if e!=nil{log.Printf("Backup failed: %v",e)}else{log.Printf("Backup saved: %s",name)}}
  ctx,stop:=signal.NotifyContext(context.Background(),os.Interrupt,syscall.SIGTERM);defer stop()
  go func(){backup();t:=time.NewTicker(interval);defer t.Stop();for{select{case <-ctx.Done():return;case <-t.C:backup();_,e:=db.Exec(`DELETE FROM sessions WHERE expires < ?`,time.Now().Unix());if e!=nil{log.Print(e)}}}}()
@@ -48,6 +57,6 @@ func main(){
  mux.HandleFunc("POST /api/logout",func(w http.ResponseWriter,r *http.Request){sum:=sha256.Sum256([]byte(strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer ")));if _,err:=db.Exec(`DELETE FROM sessions WHERE token=?`,hex.EncodeToString(sum[:]));err!=nil{http.Error(w,"Database error",500);return};w.WriteHeader(204)})
  srv:=&http.Server{Addr:env("LISTEN_ADDR","127.0.0.1:8080"),Handler:http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){w.Header().Set("Cache-Control","no-store");mux.ServeHTTP(w,r)}),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:30*time.Second,IdleTimeout:60*time.Second}
  go func(){<-ctx.Done();c,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel();srv.Shutdown(c)}()
- fmt.Println("Server listening on",srv.Addr)
- cert,key:=os.Getenv("TLS_CERT"),os.Getenv("TLS_KEY");if cert!=""&&key!=""{err=srv.ListenAndServeTLS(cert,key)}else{log.Print("HTTP mode: use only on loopback or behind an HTTPS reverse proxy");err=srv.ListenAndServe()};if err!=nil&&err!=http.ErrServerClosed{log.Fatal(err)}
+ log.Println("Server listening on",srv.Addr)
+ if cert!=""&&key!=""{err=srv.ListenAndServeTLS(cert,key)}else{log.Print("HTTP mode: use only on loopback or behind an HTTPS reverse proxy");err=srv.ListenAndServe()};if err!=nil&&err!=http.ErrServerClosed{return err};return nil
 }
