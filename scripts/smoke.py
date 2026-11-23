@@ -10,6 +10,7 @@ import tempfile
 import time
 import urllib.request
 import urllib.error
+import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
 EXT = '.exe' if os.name == 'nt' else ''
@@ -93,7 +94,9 @@ with tempfile.TemporaryDirectory() as d:
             assert request(local, '/api/login', {'login': 'admin', 'password': env['ADMIN_PASSWORD']})[0] == 200
             print('PASS: startup errors, DB restart, snapshot integrity, client/proxy, login/me/logout, server offline')
         except BaseException:
-            print((work / 'process.log').read_text(encoding='utf-8', errors='replace'))
+            report = (work / 'process.log').read_text(encoding='utf-8', errors='replace') + '\n' + traceback.format_exc()
+            print(report)
+            print('::error::' + report.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
             raise
         finally:
             for p in processes:
